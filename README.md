@@ -59,6 +59,12 @@ Tear down:
 python -m chia.cli.main down cluster.yaml
 ```
 
+## Examples
+
+See `examples/` for reference material:
+- `porting-steps.md` — the high-level porting steps each agent follows
+- `v80-xdma/` — sample commit-db and debug-kb entries for a V80 XDMA port
+
 ## Repo structure
 
 ```

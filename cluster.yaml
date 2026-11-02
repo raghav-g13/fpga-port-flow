@@ -1,7 +1,14 @@
-# V80 FPGA flow cluster on a13.
+# V80 FPGA porting flow cluster.
 #
 # Two node types: one chipyard container (V80 image with FireSim +
 # Vivado/EDA tooling) and four Claude Code LLM containers.
+#
+# Before using, set these environment variables:
+#   FLOW_DIR      — absolute path to this repo checkout
+#   HEAD_IP       — hostname or IP of the head node
+#   VIVADO_DIR    — path to Vivado installation (e.g., /ecad/tools/xilinx/2025.1)
+#   EDA_DIR       — path to EDA tools root (e.g., /ecad)
+#   REFERENCES    — path to the knowledge base / references directory
 #
 # Usage:
 #   python -m chia.cli.main up   cluster.yaml
@@ -11,7 +18,7 @@
 cluster_name: v80_fpga
 
 provider:
-    head_ip: a13
+    head_ip: ${HEAD_IP}
 
 auth:
     ssh_user: ${USER}
@@ -21,13 +28,13 @@ available_node_types:
     chipyard:
         resources: {"chipyard": 1}
         num_workers: 1
-        compatible_ips: ["a13"]
+        compatible_ips: ["${HEAD_IP}"]
         worker_setup_commands:
             - "source /home/ray/chipyard/env.sh"
             - "cd /home/ray/chipyard/sims/firesim && source sourceme-manager.sh --skip-ssh-setup"
-            - "source /ecad/tools/vlsi.bashrc"
+            - "source ${EDA_DIR}/tools/vlsi.bashrc"
             - "export VCS_LIC_EXPIRE_WARNING=0"
-            - "source /ecad/tools/xilinx/2025.1/Vivado/settings64.sh"
+            - "source ${VIVADO_DIR}/Vivado/settings64.sh"
         docker:
             image: "ghcr.io/ucb-bar/chia-v80-chipyard:latest"
             container_name: "v80-chipyard-${USER}"
@@ -38,16 +45,16 @@ available_node_types:
                 - "--user $(id -u):$(id -g)"
                 - "-v $SSH_AUTH_SOCK:/ssh-agent"
                 - "-e SSH_AUTH_SOCK=/ssh-agent"
-                - "-v /ecad:/ecad:ro"
-                - "-v /nscratch/raghavgupta/fpga-port-flow/firesim:/home/ray/chipyard/sims/firesim"
-                - "-v /nscratch/raghavgupta/fpga-port:/nscratch/raghavgupta/fpga-port"
-                - "-v /nscratch/raghavgupta/fpga-port-flow/debug-kb:/nscratch/raghavgupta/fpga-port-debug"
-                - "-v /nscratch/raghavgupta/fpga-port-flow/commit-db:/nscratch/raghavgupta/fpga-port-commit"
+                - "-v ${EDA_DIR}:${EDA_DIR}:ro"
+                - "-v ${FLOW_DIR}/firesim:/home/ray/chipyard/sims/firesim"
+                - "-v ${REFERENCES}:${REFERENCES}"
+                - "-v ${FLOW_DIR}/debug-kb:${FLOW_DIR}/debug-kb"
+                - "-v ${FLOW_DIR}/commit-db:${FLOW_DIR}/commit-db"
 
     llm:
         resources: {"llm": 1, "claude_creds": 1}
         num_workers: 4
-        compatible_ips: ["a13"]
+        compatible_ips: ["${HEAD_IP}"]
         docker:
             image: "ghcr.io/ucb-bar/chia-claude-code:latest"
             container_name: "v80-claude-code-${USER}"
@@ -56,12 +63,12 @@ available_node_types:
                 - --ulimit nofile=65536:65536
                 - --shm-size=10.24gb
                 - "--user $(id -u):$(id -g)"
-                - "-v /tmp/rg-claude:/home/ray/.claude"
+                - "-v /tmp/${USER}-claude:/home/ray/.claude"
                 - "-v $SSH_AUTH_SOCK:/ssh-agent"
                 - "-e SSH_AUTH_SOCK=/ssh-agent"
-                - "-v /nscratch/raghavgupta/fpga-port:/nscratch/raghavgupta/fpga-port"
-                - "-v /nscratch/raghavgupta/fpga-port-flow/debug-kb:/nscratch/raghavgupta/fpga-port-debug"
-                - "-v /nscratch/raghavgupta/fpga-port-flow/commit-db:/nscratch/raghavgupta/fpga-port-commit"
+                - "-v ${REFERENCES}:${REFERENCES}"
+                - "-v ${FLOW_DIR}/debug-kb:${FLOW_DIR}/debug-kb"
+                - "-v ${FLOW_DIR}/commit-db:${FLOW_DIR}/commit-db"
             run_setup_commands:
                 - echo "user:x:$(id -u):$(id -g)::/home/ray:/bin/bash" >> /etc/passwd
                 - mkdir -p /home/ray/llm_env

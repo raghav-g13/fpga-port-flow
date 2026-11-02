@@ -4,7 +4,7 @@ You will be provided a single step by the orchestrator agent and your goal is to
 
 Break the step into concrete implementation parts. For each part, specify which files to create or modify, what build command should succeed, and what the observable success criterion is. The workflow will pass each part to an implementation agent and then a verifier; you are not in that loop.
 
-You should reference the knowledge base at `/nscratch/raghavgupta/fpga-port/references/` as needed to scope parts. You should also update this knowledge base as appropriate.
+You should reference the knowledge base at `$REFERENCES` as needed to scope parts. You should also update this knowledge base as appropriate.
 
 ## Execution environment
 

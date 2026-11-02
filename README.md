@@ -11,22 +11,31 @@ orchestrator → step-lead → impl-and-debug ⇄ verifier → next step
 ```bash
 git clone --recurse-submodules <this-repo>
 conda activate chia_env
-source ~/create-ssh-agent.sh
 ```
 
-The `firesim/` submodule is volume-mounted into the chipyard container at runtime — you don't need to build it locally.
+Set environment variables (add to your shell profile or a local `.env`):
+
+```bash
+export FLOW_DIR=/path/to/fpga-port-flow
+export HEAD_IP=<cluster-head-hostname>
+export VIVADO_DIR=/path/to/xilinx/2025.1
+export EDA_DIR=/path/to/eda-tools
+export REFERENCES=/path/to/knowledge-base/references
+```
+
+The `firesim/` submodule is volume-mounted into the chipyard container at runtime.
 
 ## Docker image
 
 ```bash
-./build.sh                          # builds ghcr.io/ucb-bar/chia-v80-chipyard:latest
+./build.sh    # builds ghcr.io/ucb-bar/chia-v80-chipyard:latest
 ```
 
 ## Run
 
 ```bash
 python -m chia.cli.main up cluster.yaml
-RAY_ADDRESS=a13:6380 chia job submit -- python fpga_port_flow.py
+RAY_ADDRESS=$HEAD_IP:6380 chia job submit -- python fpga_port_flow.py
 ```
 
 Human review gates block at `out/review/`. Approve with:
@@ -37,7 +46,7 @@ touch out/review/step{N}_parts.approved
 
 Follow logs:
 ```bash
-RAY_ADDRESS=a13:6380 ray job logs --follow <submission_id>
+RAY_ADDRESS=$HEAD_IP:6380 ray job logs --follow <submission_id>
 ```
 
 Resume from a specific step/part:
@@ -60,12 +69,9 @@ python -m chia.cli.main down cluster.yaml
 ├── firesim/             # submodule: firesim/firesim (mounted into container)
 ├── commit-db/           # append-only commit database (see commit-db/MANIFEST.md)
 ├── debug-kb/            # debug knowledge base (see debug-kb/MANIFEST.md)
-├── examples/            # example commit-db and debug-kb entries
+├── examples/            # porting steps reference + example commit-db/debug-kb entries
+│   ├── porting-steps.md
 │   └── v80-xdma/
 ├── build.sh / run.sh    # Docker build and run helpers
 └── V80ChipyardDockerfile
 ```
-
-## External dependency
-
-The flow expects a porting-steps reference at `/nscratch/raghavgupta/fpga-port/references/firesim/porting-steps.md`, mounted into containers via `cluster.yaml`.

@@ -8,9 +8,9 @@ We are **actively avoiding the AVED (Alveo Versal Example Design) flow**. The go
 
 ## Key references
 
-- Board details and links: `/nscratch/raghavgupta/fpga-port/references/fpga/XilinxAlveoV80.md`
-- XSim simulation setup: `/nscratch/raghavgupta/fpga-port/references/tools/vivado-xsim.md`
-- Environment setup: `/nscratch/raghavgupta/fpga-port/references/firesim/environment.md`
+- Board details and links: `$REFERENCES/fpga/XilinxAlveoV80.md`
+- XSim simulation setup: `$REFERENCES/tools/vivado-xsim.md`
+- Environment setup: `$REFERENCES/firesim/environment.md`
 - Platform source: `$FIRESIM/platforms/xilinx_alveo_v80/`
 
 ## Container specifics

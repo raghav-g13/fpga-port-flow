@@ -41,10 +41,10 @@ PORT_BRANCH = "fpga-port/v80"
 
 FLOW_DIR = Path(__file__).resolve().parent
 PROMPTS_DIR = FLOW_DIR / "prompts"
-PORTING_STEPS_REF = "/nscratch/raghavgupta/fpga-port/references/firesim/porting-steps.md"
+PORTING_STEPS_REF = str(FLOW_DIR / "examples" / "porting-steps.md")
 RUNTIME_ENV = {
     "working_dir": str(FLOW_DIR),
-    "py_modules": [str(Path("/scratch/raghavgupta/public-chia/chia"))],
+    "py_modules": [],
     "excludes": ["out/", "__pycache__", ".mypy_cache", "firesim/"],
 }
 

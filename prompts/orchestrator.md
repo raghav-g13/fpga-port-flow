@@ -2,7 +2,7 @@ You are the top-level orchestrator agent of an automatic agent-driven flow to po
 
 The workflow will execute each step sequentially using separate implementation and verification agents. Your job is to produce the step plan — the workflow handles delegation, iteration, and routing.
 
-You should reference the knowledge base at `/nscratch/raghavgupta/fpga-port/references/` when decomposing.
+You should reference the knowledge base at `$REFERENCES` when decomposing.
 
 ## Container interaction
 

@@ -63,7 +63,8 @@ python -m chia.cli.main down cluster.yaml
 
 See `examples/` for reference material:
 - `porting-steps.md` — the high-level porting steps each agent follows
-- `v80-xdma/` — sample commit-db and debug-kb entries for a V80 XDMA port
+- `v80-qdma/commit-db/` — full commit database from a V80 QDMA port (9 steps, 62 commits)
+- `v80-qdma/debug-kb/` — full debug knowledge base from the same port (27 bug entries)
 
 ## Repo structure
 
@@ -75,9 +76,9 @@ See `examples/` for reference material:
 ├── firesim/             # submodule: firesim/firesim (mounted into container)
 ├── commit-db/           # append-only commit database (see commit-db/MANIFEST.md)
 ├── debug-kb/            # debug knowledge base (see debug-kb/MANIFEST.md)
-├── examples/            # porting steps reference + example commit-db/debug-kb entries
+├── examples/            # porting steps reference + real V80 QDMA port data
 │   ├── porting-steps.md
-│   └── v80-xdma/
+│   └── v80-qdma/
 ├── build.sh / run.sh    # Docker build and run helpers
 └── V80ChipyardDockerfile
 ```

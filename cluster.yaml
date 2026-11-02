@@ -1,0 +1,75 @@
+# V80 FPGA flow cluster on a13.
+#
+# Two node types: one chipyard container (V80 image with FireSim +
+# Vivado/EDA tooling) and four Claude Code LLM containers.
+#
+# Usage:
+#   python -m chia.cli.main up   cluster.yaml
+#   chia job submit -- python <flow>.py
+#   python -m chia.cli.main down cluster.yaml
+
+cluster_name: v80_fpga
+
+provider:
+    head_ip: a13
+
+auth:
+    ssh_user: ${USER}
+
+available_node_types:
+
+    chipyard:
+        resources: {"chipyard": 1}
+        num_workers: 1
+        compatible_ips: ["a13"]
+        worker_setup_commands:
+            - "source /home/ray/chipyard/env.sh"
+            - "cd /home/ray/chipyard/sims/firesim && source sourceme-manager.sh --skip-ssh-setup"
+            - "source /ecad/tools/vlsi.bashrc"
+            - "export VCS_LIC_EXPIRE_WARNING=0"
+            - "source /ecad/tools/xilinx/2025.1/Vivado/settings64.sh"
+        docker:
+            image: "ghcr.io/ucb-bar/chia-v80-chipyard:latest"
+            container_name: "v80-chipyard-${USER}"
+            pull_before_run: False
+            run_options:
+                - --ulimit nofile=65536:65536
+                - --shm-size=10.24gb
+                - "--user $(id -u):$(id -g)"
+                - "-v $SSH_AUTH_SOCK:/ssh-agent"
+                - "-e SSH_AUTH_SOCK=/ssh-agent"
+                - "-v /ecad:/ecad:ro"
+                - "-v /nscratch/raghavgupta/fpga-port-flow/firesim:/home/ray/chipyard/sims/firesim"
+                - "-v /nscratch/raghavgupta/fpga-port:/nscratch/raghavgupta/fpga-port"
+                - "-v /nscratch/raghavgupta/fpga-port-flow/debug-kb:/nscratch/raghavgupta/fpga-port-debug"
+                - "-v /nscratch/raghavgupta/fpga-port-flow/commit-db:/nscratch/raghavgupta/fpga-port-commit"
+
+    llm:
+        resources: {"llm": 1, "claude_creds": 1}
+        num_workers: 4
+        compatible_ips: ["a13"]
+        docker:
+            image: "ghcr.io/ucb-bar/chia-claude-code:latest"
+            container_name: "v80-claude-code-${USER}"
+            pull_before_run: False
+            run_options:
+                - --ulimit nofile=65536:65536
+                - --shm-size=10.24gb
+                - "--user $(id -u):$(id -g)"
+                - "-v /tmp/rg-claude:/home/ray/.claude"
+                - "-v $SSH_AUTH_SOCK:/ssh-agent"
+                - "-e SSH_AUTH_SOCK=/ssh-agent"
+                - "-v /nscratch/raghavgupta/fpga-port:/nscratch/raghavgupta/fpga-port"
+                - "-v /nscratch/raghavgupta/fpga-port-flow/debug-kb:/nscratch/raghavgupta/fpga-port-debug"
+                - "-v /nscratch/raghavgupta/fpga-port-flow/commit-db:/nscratch/raghavgupta/fpga-port-commit"
+            run_setup_commands:
+                - echo "user:x:$(id -u):$(id -g)::/home/ray:/bin/bash" >> /etc/passwd
+                - mkdir -p /home/ray/llm_env
+
+head_env_commands: ["source ~/.bashrc && conda activate chia_env"]
+
+head_start_ray_commands:
+    - ulimit -c unlimited && ray start --head --port=6380 --dashboard-port=8082 --include-dashboard=True --dashboard-agent-listen-port=0 --temp-dir=/tmp/ray/${USER}-v80
+
+worker_start_ray_commands:
+    - ray start --address=$RAY_HEAD_IP:6380 --dashboard-agent-listen-port=0

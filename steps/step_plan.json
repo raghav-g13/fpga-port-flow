@@ -1,0 +1,125 @@
+{
+  "steps": [
+    {
+      "id": 1,
+      "name": "F1Shim VCS simulation setup",
+      "description": "Create a VCS compile/elaborate/simulate flow for the full FireSim design (board_firesim.v + overall_fpga_top + F1Shim generated RTL). The existing VCS flow under ced_option_c/ validates the CED block design only (user_control scratch registers) \u2014 it does NOT include F1Shim. This step adapts the existing Vivado project (created by setup_xsim.tcl with FireSim-generated.sv) to export VCS simulation scripts, or creates a standalone VCS flow analogous to ced_option_c/run_vcs.sh but targeting board_firesim.v as the testbench top. The Vivado project already exists at cl_xilinx_alveo_v80-.../vivado_proj/firesim.xpr with generated RTL. VCS compiled Xilinx libraries are at platforms/xilinx_alveo_v80/cl_firesim/verif/vcs_xilinx_lib/.",
+      "success_criteria": [
+        "VCS compiles all sources (board_firesim.v, overall_fpga_top.v, FireSim-generated.sv, CED RP BFM, NoC/CIPS behavioral models) without errors",
+        "VCS elaboration succeeds with board as the top module",
+        "A run_vcs.sh script (or equivalent) exists that accepts a +TESTNAME argument and runs the simulation",
+        "A smoke test (e.g. qdma_mm_test0 from CED sample_tests.vh) reaches PCIe link-up (LTSSM=0x10) and completes to $finish without assertion failures"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "F1Shim MMIO simulation test",
+      "description": "Write a bar_test0 test in tests_firesim.vh that exercises the BAR1 \u2192 NoC \u2192 PCIE_M_AXI_LITE \u2192 F1Shim io_master path. The CED Option C tests (tests_v80_bar.vh) validated BAR1 \u2192 user_control (scratch registers at 0x60/0x64), but F1Shim's io_master is a different AXI-Lite endpoint with its own register map. The test should send MMIO reads to known F1Shim addresses (e.g., offset 0x0 for the simulation ready register, offset 0x4 for is_write_ready) and verify the response is valid (not X, not timeout). Also run the test in VCS from Step 1.",
+      "success_criteria": [
+        "bar_test0 test case exists in tests_firesim.vh",
+        "VCS simulation reaches PCIe link-up, enumerates BARs, and executes MMIO read/write transactions to F1Shim io_master",
+        "F1Shim responds to MMIO reads with valid data (not X or all-zeros from a disconnected bus)",
+        "Test completes to $finish with PASSED status in the simulation log",
+        "No NoC NMU $fatal errors (signals feeding NMU must be driven to known values through reset)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "F1Shim DMA simulation test",
+      "description": "Run qdma_mm_firesim_test0 (already defined in tests_firesim.vh) in VCS against the full FireSim design. This test uses CED's TSK_QDMA_MM_H2C_TEST and TSK_QDMA_MM_C2H_TEST tasks to drive QDMA MM DMA through the NoC to PCIE_M_AXI \u2192 F1Shim io_pcis. The CED Option C ran similar DMA tests but to BRAM targets; this test validates DMA reaches F1Shim's DMA port. The QDMA MM destination address must route through the NoC axi_noc_0 aperture at 0x203_0000_0000 (the overall_fpga_top.v strips this base, passing lower 32 bits to io_pcis). Address map mismatches are the most likely failure mode.",
+      "success_criteria": [
+        "qdma_mm_firesim_test0 runs in VCS against the F1Shim design",
+        "QDMA H2C (host-to-card) DMA transfer completes without timeout",
+        "QDMA C2H (card-to-host) DMA transfer completes without timeout",
+        "Test completes with PASSED status (no data compare errors)",
+        "No contention errors that prevent test completion (SecureIP contention warnings are expected and benign)"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Scala config audit and fix",
+      "description": "Verify that XilinxAlveoV80Config (which inherits from XilinxAlveoU250Config) has correct AXI port parameters for the V80 NoC/BD. Key checks: (1) CPUManagedAXI4Key idBits \u2014 U250 config specifies 4-bit IDs but the V80 NoC PCIE_M_AXI port has 2-bit IDs (overall_fpga_top.v pads with {14'b0, PCIE_M_AXI_awid}); verify the Scala-generated F1Shim io_pcis ID width matches what the RTL expects. (2) CtrlNastiKey addr width \u2014 25 bits; verify BAR1 aperture supports this. (3) HostMemChannelKey \u2014 8 GiB, 1 channel; verify DDR4 MC config matches. (4) F1Shim generates io_slave_0 with 40-bit addr (firesim_slave_0_awaddr in overall_fpga_top.v); verify this matches Scala config. Fix any mismatches.",
+      "success_criteria": [
+        "CPUManagedAXI4Key idBits matches what the V80 NoC actually provides (or document why the mismatch is handled in RTL)",
+        "CtrlNastiKey address width is compatible with the V80 BAR1 aperture size (32 MB = 25-bit address)",
+        "HostMemChannelKey capacity (8 GiB) and channel count (1) match the V80 DDR4 configuration",
+        "F1Shim elaboration produces io_slave_0 address width that matches the 40-bit wire in overall_fpga_top.v",
+        "If any config parameters are changed, Scala recompiles cleanly and generated RTL port signatures remain compatible with overall_fpga_top.v"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Driver compilation verification",
+      "description": "Build the V80 FireSim driver binary using the build system. Run 'make -C $FIRESIM/sim PLATFORM=xilinx_alveo_v80 xilinx_alveo_v80' within the conda environment. This compiles simif_xilinx_alveo_v80.cc against the FireSim MIDAS headers and links it into a driver binary. The driver uses standard POSIX APIs (mmap, pread/pwrite, open) so no special QDMA SDK headers are needed, but verify the conda environment provides all required headers and libraries.",
+      "success_criteria": [
+        "make command completes without compilation errors",
+        "Driver binary is produced at the expected output path (FireSim-xilinx_alveo_v80 or similar)",
+        "No unresolved symbols at link time",
+        "Binary runs with --help or similar flag without segfault (basic smoke test)"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Metasimulation with bare workload",
+      "description": "Run the bare workload (deploy/workloads/bare.json) through Verilator metasimulation using the V80 platform config (BaseXilinxAlveoV80Config). This validates that Golden Gate correctly transforms the target design for the V80 config and that MIDAS bridges (UART, block device) are functional. Metasim wraps F1Shim directly with simif_emul, bypassing platform-specific RTL and driver \u2014 it tests the FireSim infrastructure independently from the platform plumbing. Steps: (1) generate V80 target RTL via Golden Gate, (2) build Verilator model, (3) run bare workload, (4) check uartlog for expected output.",
+      "success_criteria": [
+        "Golden Gate elaboration completes for FireSimRocket8GiBDRAMConfig + BaseXilinxAlveoV80Config",
+        "Verilator model compiles successfully",
+        "Metasimulation runs to completion without hanging or assertion failures",
+        "uartlog contains expected 'hello' output from the bare workload",
+        "No FASED memory model errors in the simulation log"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "HWDB entry and runtime configuration",
+      "description": "Create the HWDB entry in deploy/config_hwdb.yaml referencing the V80 bitstream (PDI) and design metadata. Create a V80-specific runtime config section or a sample run-farm recipe YAML that sets default_platform to XilinxAlveoV80InstanceDeployManager. The build recipe already exists in config_build_recipes.yaml (xilinx_alveo_v80_firesim_rocket_singlecore_no_nic). The HWDB entry should reference the PDI path and driver tar from a successful buildbitstream run. For initial setup, a placeholder entry pointing to the debug PDI (cl_firesim_debug/vivado_proj/firesim_debug.pdi) is acceptable.",
+      "success_criteria": [
+        "HWDB entry exists in config_hwdb.yaml with valid bitstream path, design config, and platform metadata",
+        "Runtime config YAML exists with default_platform set to XilinxAlveoV80InstanceDeployManager",
+        "firesim managerinit accepts the config without parse errors",
+        "Config files reference consistent design names across build recipes, HWDB, and runtime config"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Deploy manager QDMA customization",
+      "description": "Override XilinxAlveoV80InstanceDeployManager to use QDMA instead of XDMA. The parent class XilinxAlveoInstanceDeployManager calls load_xdma() (XDMA kernel module), flash_fpgas() (programs .bit files via Vivado), and assumes XDMA device files. V80 needs: (1) load_qdma() \u2014 load qdma-pf kernel module, set qmax, add/start MM queues via dma-ctl; (2) flash_fpgas() \u2014 program .pdi files (Versal uses PDI, not .bit) via vivado -mode batch with program_hw_devices; (3) PCIe re-enumeration after PDI programming (Versal full-bitstream drops PCIe link). Reference the CorigineXB10InstanceDeployManager for the pattern of overriding create_fpga_database(). Reference the driver code (simif_xilinx_alveo_v80.cc) for QDMA device naming convention (/dev/qdmaXXXXX-MM-0).",
+      "success_criteria": [
+        "XilinxAlveoV80InstanceDeployManager overrides load_xdma with QDMA-specific logic (module load, queue setup)",
+        "flash_fpgas() method programs PDI files instead of .bit files",
+        "PCIe re-enumeration or recovery is handled after PDI programming",
+        "QDMA queue setup matches what the driver expects (MM queue 0, bidirectional)",
+        "Python code passes basic linting/import checks"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "End-to-end bitstream build via manager",
+      "description": "Run 'firesim buildbitstream' for the V80 config to test the full manager-orchestrated build flow: Golden Gate generates FireSim-generated.sv, manager copies cl_firesim/ to the build area, generated RTL is placed in the design/ directory, build-bitstream.sh invokes Vivado synthesis + implementation + PDI generation. The build recipe (xilinx_alveo_v80_firesim_rocket_singlecore_no_nic) is already in config_build_recipes.yaml and config_build.yaml references it. The existing debug PDI build (cl_firesim_debug, May 29) proved Vivado can synthesize and implement the design; this step validates the manager orchestration.",
+      "success_criteria": [
+        "firesim buildbitstream command launches without errors",
+        "Golden Gate RTL generation completes and FireSim-generated.sv is produced",
+        "Vivado synthesis completes without critical errors",
+        "Vivado implementation (place + route) completes",
+        "PDI file is generated and bitstream is packaged by the manager",
+        "No timing violations above the acceptable threshold in the timing report",
+        "Build artifacts are registered in HWDB (or ready for registration)"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Hardware deployment and testing",
+      "description": "AGENT \u2192 HUMAN TEST. Flash the V80 PDI onto real hardware, verify PCIe enumeration, load QDMA driver, set up queues, and run the bare workload end-to-end. This requires physical access to a server with a V80 installed. Agent prepares deployment scripts and instructions; human executes on the FPGA server and reports results. Key checks: PDI programs successfully, device reappears on PCIe bus after re-enumeration, QDMA driver loads and creates /dev/qdmaXXXXX-MM-0, BAR1 is accessible (lspci shows expected BAR sizes), firesim infrasetup + runworkload completes, uartlog shows expected output.",
+      "success_criteria": [
+        "PDI programs onto V80 without errors (vivado -mode batch programming)",
+        "Device reappears on PCIe bus after re-enumeration (lspci shows 10ee:903f)",
+        "QDMA kernel driver loads and device files are created",
+        "dma-ctl queue add/start succeeds for MM queue 0",
+        "Driver binary runs and connects to the FPGA (BAR1 mmap succeeds, initial MMIO read returns valid data)",
+        "bare workload runs to completion and uartlog contains expected output",
+        "No kernel oops, PCIe AER errors, or dmesg errors during the run"
+      ]
+    }
+  ]
+}

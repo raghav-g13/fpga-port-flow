@@ -1,0 +1,49 @@
+{
+  "step": {
+    "id": 4,
+    "name": "Scala config audit and fix",
+    "description": "Fix XilinxAlveoV80Config to reflect the V80's actual DDR4 capacity (32 GiB, not 8 GiB), revert V80-specific global changes in F1Config, and ensure RTL wrapper wire widths are consistent with the corrected Scala-generated port widths.",
+    "success_criteria": [
+      "HostMemChannelKey size is 0x800000000L (32 GiB) matching the V80's single DDR4 RDIMM",
+      "CPUManagedAXI4Key idBits=16 is declared in XilinxAlveoV80Config (not globally in F1Config)",
+      "CtrlNastiKey address width is compatible with the V80 BAR1 aperture",
+      "F1Shim re-elaboration produces port widths consistent with the corrected config",
+      "RTL wrapper wire widths and padding in overall_fpga_top.v match the re-elaborated F1Shim ports"
+    ]
+  },
+  "parts": [
+    {
+      "id": 1,
+      "description": "Fix XilinxAlveoV80Config in Config.scala: (a) Change HostMemChannelKey size from 0x200000000L (8 GiB) to 0x800000000L (32 GiB) to match the V80's actual DDR4 capacity. (b) Revert F1Config's CPUManagedAXI4Key idBits from 16 back to 6 (the global change was V80-specific and could break other platforms). (c) Add an explicit CPUManagedAXI4Key override in XilinxAlveoV80Config with idBits=16. Verify sbt compile succeeds.",
+      "files_to_modify": [
+        "$FIRESIM/sim/midas/src/main/scala/midas/Config.scala"
+      ],
+      "build_command": "cd $CHIPYARD && source env.sh && cd sims/firesim/sim && sbt 'project midas' compile 2>&1 | tail -10",
+      "done_when": "sbt compile succeeds. XilinxAlveoV80Config has size=0x800000000L and CPUManagedAXI4Key with idBits=16. F1Config's CPUManagedAXI4Key is restored to idBits=6."
+    },
+    {
+      "id": 2,
+      "description": "Re-elaborate F1Shim for the V80 config to regenerate RTL with the corrected 32 GiB memory size. Then inspect the generated FireSim-generated.sv to determine the actual port widths produced (io_slave_0_aw_bits_addr width will now be log2Ceil(32 GiB)=35 bits instead of 33). Record the exact widths for io_slave_0_aw_bits_addr, io_slave_0_ar_bits_addr, io_pcis_aw_bits_id, io_master_aw_bits_addr, io_slave_0_w_bits_data, and io_slave_0_aw_bits_id.",
+      "files_to_modify": [],
+      "build_command": "cd $CHIPYARD && source env.sh && cd sims/firesim/sim && make PLATFORM=xilinx_alveo_v80 DESIGN=FireSim TARGET_CONFIG=FireSimRocket8GiBDRAMConfig PLATFORM_CONFIG=BaseXilinxAlveoV80Config verilog 2>&1 | tail -20",
+      "done_when": "FireSim-generated.sv is regenerated. The agent has recorded the exact bit widths of all F1Shim ports listed above for use in Part 3."
+    },
+    {
+      "id": 3,
+      "description": "Update RTL wrapper wire widths and padding in BOTH copies of overall_fpga_top.v to match the regenerated F1Shim port widths from Part 2. For each address/ID wire connected to F1Shim, set the wire width to match the F1Shim port exactly, and adjust the zero-padding in assign statements so the total concatenation matches the AXI interface width (e.g., if io_slave_0_aw_bits_addr is now [34:0], set wire [34:0] firesim_slave_0_awaddr and pad with {29'b0, firesim_slave_0_awaddr} to reach 64 bits). Do NOT hardcode expected widths — read them from the generated SV and apply consistently.",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/design/overall_fpga_top.v",
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_xilinx_alveo_v80-firesim-FireSim-FireSimRocket8GiBDRAMConfig-BaseXilinxAlveoV80Config/design/overall_fpga_top.v"
+      ],
+      "build_command": "grep -n 'firesim_slave_0_awaddr\\|firesim_slave_0_araddr' $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/design/overall_fpga_top.v $FIRESIM/platforms/xilinx_alveo_v80/cl_xilinx_alveo_v80-firesim-FireSim-FireSimRocket8GiBDRAMConfig-BaseXilinxAlveoV80Config/design/overall_fpga_top.v",
+      "done_when": "Both overall_fpga_top.v files have wire widths and padding that exactly match the regenerated F1Shim port widths. No undriven bits, no width mismatches."
+    },
+    {
+      "id": 4,
+      "description": "End-to-end consistency verification. Check that all width relationships are coherent: (1) F1Shim io_slave_0 addr width = log2Ceil(HostMemChannelKey.size) = 35, (2) RTL wrapper wires match F1Shim ports, (3) CPUManagedAXI4Key idBits in XilinxAlveoV80Config matches the RTL {14'b0, PCIE_M_AXI_awid} padding, (4) CtrlNastiKey addrBits matches PCIE_M_AXI_LITE slice, (5) HostMemNumChannels=1 matches single DDR4 instantiation. Print a summary confirming each check.",
+      "files_to_modify": [],
+      "build_command": "echo 'Verification — read generated SV and RTL wrappers, confirm all widths match'",
+      "done_when": "All 5 checks pass and a printed summary confirms consistency between Scala config (32 GiB, 1 channel, idBits=16, addrBits=25), generated F1Shim ports, and RTL wrapper wiring."
+    }
+  ]
+}

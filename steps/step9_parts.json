@@ -1,0 +1,64 @@
+{
+  "step": {
+    "id": 9,
+    "name": "End-to-end bitstream build via manager",
+    "description": "Run 'firesim buildbitstream' for the V80 config to test the full manager-orchestrated build flow: Golden Gate generates FireSim-generated.sv, manager copies cl_firesim/ to the build area, generated RTL is placed in the design/ directory, build-bitstream.sh invokes Vivado synthesis + implementation + PDI generation. The build recipe (xilinx_alveo_v80_firesim_rocket_singlecore_no_nic) is already in config_build_recipes.yaml and config_build.yaml references it. The existing debug PDI build (cl_firesim_debug, May 29) proved Vivado can synthesize and implement the design; this step validates the manager orchestration.",
+    "success_criteria": [
+      "firesim buildbitstream command launches without errors",
+      "Golden Gate RTL generation completes and FireSim-generated.sv is produced",
+      "Vivado synthesis completes without critical errors",
+      "Vivado implementation (place + route) completes",
+      "PDI file is generated and bitstream is packaged by the manager",
+      "No timing violations above the acceptable threshold in the timing report",
+      "Build artifacts are registered in HWDB (or ready for registration)"
+    ]
+  },
+  "parts": [
+    {
+      "id": 1,
+      "description": "Create NSS UID fix library and wrapper for container environment. The container runs as UID 19696 but /etc/passwd has ray:x:1000. Python's pwd module, Fabric's SSH client, and getpass all fail with 'uid not found'. Build a small LD_PRELOAD shared library (nss_uid_fix.so) that intercepts getpwuid/getpwnam/getpwuid_r/getpwnam_r to map UID 19696 \u2192 ray with home=/home/ray. Install it persistently under $FIRESIM/deploy/utils/ and create a firesim-local wrapper script that sets LD_PRELOAD before invoking the firesim command. The C source, compiled .so, and wrapper script should all live under $FIRESIM/deploy/. Verify with: LD_PRELOAD=<path>/nss_uid_fix.so python3 -c 'import getpass; print(getpass.getuser())' prints 'ray'.",
+      "files_to_modify": [
+        "$FIRESIM/deploy/nss_uid_fix.c",
+        "$FIRESIM/deploy/firesim-local"
+      ],
+      "build_command": "cd $FIRESIM/deploy && gcc -shared -fPIC -o nss_uid_fix.so nss_uid_fix.c -ldl && chmod +x firesim-local && LD_PRELOAD=$FIRESIM/deploy/nss_uid_fix.so python3 -c \"import getpass; print(getpass.getuser())\"",
+      "done_when": "nss_uid_fix.so compiles, firesim-local wrapper exists, and 'LD_PRELOAD=.../nss_uid_fix.so python3 -c import getpass; print(getpass.getuser())' prints 'ray'"
+    },
+    {
+      "id": 2,
+      "description": "Modify BitBuilder in bitbuilder.py to support localhost builds without SSH. The manager uses Fabric's run() and rsync_project() which require SSH even to localhost, but no sshd is accessible from this container. Add helper methods to BitBuilder base class: (1) _is_localhost() checks if env.host_string is 'localhost' or '127.0.0.1'; (2) _exec(cmd, **kwargs) dispatches to local(cmd, capture=True) for localhost or run(cmd, **kwargs) for remote; (3) _rsync_files(local_dir, remote_dir, upload=True, exclude=None, extra_opts='') dispatches to local('rsync -a ...') for localhost or rsync_project() for remote. Then modify: (A) BitBuilder.replace_rtl() \u2014 replace run() with self._exec() inside the prefix() context; (B) BitBuilder.build_driver() \u2014 replace run() with self._exec(); (C) XilinxAlveoBitBuilder.cl_dir_setup() \u2014 replace run() with self._exec() and rsync_project() with self._rsync_files(); (D) XilinxAlveoBitBuilder.build_bitstream() \u2014 replace run() with self._exec() and rsync_project() with self._rsync_files(), keeping settings(warn_only=True) for the Vivado invocation. IMPORTANT: For local rsync in _rsync_files, omit ssh_opts entirely (use 'rsync -aL <src> <dst>' without -e ssh). The prefix() context manager works correctly with local() in Fabric 1.x (verified). Do NOT modify remote-host behavior; only change behavior when _is_localhost() is True.",
+      "files_to_modify": [
+        "$FIRESIM/deploy/buildtools/bitbuilder.py"
+      ],
+      "build_command": "cd $FIRESIM/deploy && LD_PRELOAD=$FIRESIM/deploy/nss_uid_fix.so python3 -c \"from buildtools.bitbuilder import XilinxAlveoV80BitBuilder; print('Import OK')\" && LD_PRELOAD=$FIRESIM/deploy/nss_uid_fix.so python3 -c \"from fabric.api import env, execute, local, prefix; env.host_string='localhost'; from buildtools.bitbuilder import BitBuilder; b = BitBuilder.__new__(BitBuilder); print('localhost?', b._is_localhost()); print('All OK')\"",
+      "done_when": "bitbuilder.py imports without error; _is_localhost() returns True when env.host_string='localhost'; a smoke test calling _exec('echo hello') from localhost returns 'hello' via local() without attempting SSH"
+    },
+    {
+      "id": 3,
+      "description": "Update config_build.yaml and config_build_farm.yaml for V80 bitstream build. (A) In $FIRESIM/deploy/config_build.yaml: change builds_to_run from 'midasexamples_gcd' to 'xilinx_alveo_v80_firesim_rocket_singlecore_no_nic'; set default_build_dir under build_farm.recipe_arg_overrides to '$FIRESIM/build_area' (use the literal path /home/ray/chipyard/sims/firesim/build_area since YAML doesn't expand env vars); create the build_area directory. (B) Ensure the build farm recipe (build-farm-recipes/externally_provisioned.yaml) has matching default_build_dir. Note: the recipe's xilinx_alveo_v80_firesim_rocket_singlecore_no_nic is already defined in config_build_recipes.yaml with PLATFORM=xilinx_alveo_v80, TARGET_CONFIG=WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.RocketConfig, PLATFORM_CONFIG=BaseXilinxAlveoV80Config, frequency=75, strategy=TIMING.",
+      "files_to_modify": [
+        "$FIRESIM/deploy/config_build.yaml"
+      ],
+      "build_command": "mkdir -p /home/ray/chipyard/sims/firesim/build_area && cd $FIRESIM/deploy && LD_PRELOAD=$FIRESIM/deploy/nss_uid_fix.so python3 -c \"import yaml; cfg = yaml.safe_load(open('config_build.yaml')); print('builds:', cfg['builds_to_run']); print('build_dir:', cfg['build_farm']['recipe_arg_overrides']['default_build_dir'])\"",
+      "done_when": "config_build.yaml parses correctly with builds_to_run containing 'xilinx_alveo_v80_firesim_rocket_singlecore_no_nic' and default_build_dir set to a writable path; the build_area directory exists"
+    },
+    {
+      "id": 4,
+      "description": "Fix ADEF-911 DRC failure in Vivado write_device_image step. The June 5 build failed because BUFGCE cells generated by FIRRTL have SIM_DEVICE=ULTRASCALE but Versal requires VERSAL_HBM. The post_synth.tcl script fixes them in-memory but the fix doesn't persist to the on-disk checkpoint used by launch_runs. The pre_write_device_image.tcl TCL.PRE hook (which downgrades ADEF-911 to a warning) was set AFTER the first launch_runs completed, and Vivado 2025.1 doesn't apply it to the spawned subprocess. Fix this with a two-pronged approach: (A) In $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts/implementation.tcl, move the 'set_property STEPS.WRITE_DEVICE_IMAGE.TCL.PRE' line to BEFORE the first 'launch_runs' call (right after the reset_runs and set_property -dict block). This ensures the hook is part of the initial run configuration. (B) In $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts/synthesis.tcl, add a STEPS.SYNTH_DESIGN.TCL.POST hook that fixes BUFGCE SIM_DEVICE inside the synthesis subprocess (before the checkpoint is saved). Create a new file post_synth_in_context.tcl in the scripts/ directory containing: 'foreach cell [get_cells -hierarchical -filter {REF_NAME == BUFGCE} -quiet] { set_property SIM_DEVICE VERSAL_HBM $cell }'. In synthesis.tcl, add 'set_property STEPS.SYNTH_DESIGN.TCL.POST ${root_dir}/scripts/post_synth_in_context.tcl ${synth_run}' before the launch_runs call. This belt-and-suspenders approach ensures BUFGCEs are fixed in the persistent checkpoint AND the DRC check is downgraded.",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts/implementation.tcl",
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts/synthesis.tcl",
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts/post_synth_in_context.tcl"
+      ],
+      "build_command": "cd $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/scripts && grep -n 'WRITE_DEVICE_IMAGE.TCL.PRE' implementation.tcl && grep -n 'SYNTH_DESIGN.TCL.POST' synthesis.tcl && cat post_synth_in_context.tcl",
+      "done_when": "implementation.tcl has WRITE_DEVICE_IMAGE.TCL.PRE set BEFORE the first launch_runs call; synthesis.tcl has SYNTH_DESIGN.TCL.POST set before launch_runs; post_synth_in_context.tcl exists with the BUFGCE SIM_DEVICE fix"
+    },
+    {
+      "id": 5,
+      "description": "Run firesim buildbitstream end-to-end for the V80 config and verify completion. Source the environment, then run the build via the firesim-local wrapper (which sets LD_PRELOAD). The build has three phases: (1) Golden Gate RTL generation (replace-rtl: runs SBT/Chisel to generate FireSim-generated.sv \u2014 expect ~30-60 min), (2) Driver build (~5 min), (3) Vivado synthesis + implementation + PDI generation (~4-8 hours). Monitor the build log. The build succeeds when: (a) FireSim-generated.sv is produced in the build area design/ directory, (b) Vivado synthesis completes without errors, (c) Vivado implementation completes with WNS >= 0 and WHS >= 0 (timing met), (d) firesim.pdi is generated in vivado_proj/, (e) firesim.bit (copy of PDI) and firesim.mcs (placeholder) exist, (f) the manager creates a HWDB entry in deploy/built-hwdb-entries/. If the build fails at any stage, examine the log, fix the issue, and retry. The Vivado build uses TIMING strategy at 75 MHz on the xcv80-lsva4737-2MHP-e-S part. Note: since this build takes many hours, if the agent encounters issues during the RTL generation phase, it should focus on fixing those first before proceeding to the Vivado phase.",
+      "files_to_modify": [],
+      "build_command": "cd /home/ray/chipyard/sims/firesim && source sourceme-manager.sh --skip-ssh-setup 2>/dev/null; cd deploy && LD_PRELOAD=$FIRESIM/deploy/nss_uid_fix.so python3 firesim buildbitstream",
+      "done_when": "firesim buildbitstream completes without error; FireSim-generated.sv exists in the build area; Vivado synthesis and implementation logs show no critical errors; firesim.pdi is generated; timing report shows WNS >= 0; HWDB entry file exists in deploy/built-hwdb-entries/xilinx_alveo_v80_firesim_rocket_singlecore_no_nic"
+    }
+  ]
+}

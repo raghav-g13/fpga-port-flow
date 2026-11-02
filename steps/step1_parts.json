@@ -1,0 +1,43 @@
+{
+  "step": {
+    "id": 1,
+    "name": "F1Shim VCS simulation setup",
+    "description": "Create a VCS compile/elaborate/simulate flow for the full FireSim design (board_firesim.v + overall_fpga_top + F1Shim generated RTL). The existing VCS flow under ced_option_c/ validates the CED block design only (user_control scratch registers) \u2014 it does NOT include F1Shim. This step adapts the existing Vivado project (created by setup_xsim.tcl with FireSim-generated.sv) to export VCS simulation scripts, or creates a standalone VCS flow analogous to ced_option_c/run_vcs.sh but targeting board_firesim.v as the testbench top. The Vivado project already exists at cl_xilinx_alveo_v80-.../vivado_proj/firesim.xpr with generated RTL. VCS compiled Xilinx libraries are at platforms/xilinx_alveo_v80/cl_firesim/verif/vcs_xilinx_lib/.",
+    "success_criteria": [
+      "VCS compiles all sources (board_firesim.v, overall_fpga_top.v, FireSim-generated.sv, CED RP BFM, NoC/CIPS behavioral models) without errors",
+      "VCS elaboration succeeds with board as the top module",
+      "A run_vcs.sh script (or equivalent) exists that accepts a +TESTNAME argument and runs the simulation",
+      "A smoke test (e.g. qdma_mm_test0 from CED sample_tests.vh) reaches PCIe link-up (LTSSM=0x10) and completes to $finish without assertion failures"
+    ]
+  },
+  "parts": [
+    {
+      "id": 1,
+      "description": "Create gen_vcs_firesim.tcl and run it in Vivado batch mode to export VCS simulation scripts from the existing firesim.xpr project. The script should: (1) Accept CL_DIR as argument (auto-detect like setup_xsim.tcl if not given), (2) Open firesim.xpr, (3) Apply PIPESIM=TRUE patches to EP sim wrapper files in firesim.gen/ (string-replace .C_CPM_PIPESIM(\"FALSE\") \u2192 .C_CPM_PIPESIM(\"TRUE\") in glob bd_*_cpm_0_0.sv under design_1/), (4) Apply PIPESIM_CLK_MASTER=TRUE patch to RP sim wrapper (string-replace .C_CPM_PIPESIM_CLK_MASTER(\"FALSE\") \u2192 .C_CPM_PIPESIM_CLK_MASTER(\"TRUE\") in glob bd_*_cpm_0_0.sv under design_rp/), (5) Call export_simulation -simulator vcs -lib_map_path $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/vcs_xilinx_lib -directory $CL_DIR/vcs -force. Model after the existing setup_xsim.tcl and ced_pcie0/gen_sim_files.tcl. NOTE: The vcs_xilinx_lib/synopsys_sim.setup has absolute paths referencing /scratch/raghavgupta/v80-chipyard/... but the actual location is /home/ray/chipyard/... \u2014 before running Vivado, fix these paths (sed -i 's|/scratch/raghavgupta/v80-chipyard|/home/ray/chipyard|g' on the synopsys_sim.setup file). The CL_DIR for this build is $FIRESIM/platforms/xilinx_alveo_v80/cl_xilinx_alveo_v80-firesim-FireSim-FireSimRocket8GiBDRAMConfig-BaseXilinxAlveoV80Config. FIRESIM=/home/ray/chipyard/sims/firesim. Vivado is at /ecad/tools/xilinx/2025.1/Vivado/bin/vivado. VCS is at /ecad/tools/synopsys/vcs/W-2024.09-1/bin/vcs.",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/gen_vcs_firesim.tcl",
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/vcs_xilinx_lib/synopsys_sim.setup"
+      ],
+      "build_command": "cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && source /ecad/tools/xilinx/2025.1/Vivado/settings64.sh && vivado -mode batch -stack 2000 -source gen_vcs_firesim.tcl 2>&1 | tail -20",
+      "done_when": "The directory $FIRESIM/platforms/xilinx_alveo_v80/cl_xilinx_alveo_v80-firesim-FireSim-FireSimRocket8GiBDRAMConfig-BaseXilinxAlveoV80Config/vcs/vcs/ exists and contains board.sh (or compile.sh + elaborate.sh + simulate.sh). Vivado exits without errors. The synopsys_sim.setup in vcs_xilinx_lib/ references /home/ray/chipyard/... paths (not /scratch/raghavgupta/...)."
+    },
+    {
+      "id": 2,
+      "description": "Create run_vcs.sh wrapper script and get VCS compile + elaborate to succeed. Create $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/run_vcs.sh modeled after the existing ced_pcie0/run_vcs.sh. The script should: (1) Set VCS_HOME=/ecad/tools/synopsys/vcs/W-2024.09-1, (2) Set LD_LIBRARY_PATH to include $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/lib32/usr/lib/i386-linux-gnu, (3) Set RDI_DATADIR=/ecad/tools/xilinx/2025.1/data, (4) Source /ecad/tools/xilinx/2025.1/Vivado/settings64.sh, (5) Accept CL_DIR as optional argument or auto-detect the cl_xilinx_alveo_v80-* directory, (6) Accept step argument (compile|elaborate|simulate|all), (7) Accept +TESTNAME=... and forward to simulation, (8) cd to $CL_DIR/vcs/vcs/ and run the appropriate scripts. Patch the generated VCS compile scripts to: (a) Add -d FIRESIM_EP and -d SIMULATION to vlogan options, (b) Ensure synopsys_sim.setup OTHERS line points to vcs_xilinx_lib at the correct /home/ray/... path, (c) Fix any VCS-specific compilation errors (VCS may need -xlrm uniq_prior_final, -Xcheck_p1800_2009=char, +error+999 flags that differ from XSim). Reference the CED VCS flow's working elaborate.sh for VCS flags: '-full64 -debug_acc -t ps -licqueue -l elaborate.log +error+999 -xlrm uniq_prior_final -xmre_relax'. Iterate until vlogan compile and VCS elaborate complete without fatal errors and the board_simv binary is produced. Common VCS issues to watch for: (1) undefined macros, (2) missing include files, (3) library resolution (pre-compiled libs contain xilinx_vip, xpm, unisims_ver, secureip, etc.), (4) SystemVerilog compatibility flags.",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/run_vcs.sh"
+      ],
+      "build_command": "cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh compile && bash run_vcs.sh elaborate",
+      "done_when": "VCS compile (vlogan/vhdlan) completes without fatal errors. VCS elaborate (vcs) completes without fatal errors. The board_simv binary exists in the VCS simulation directory. Both compile and elaborate logs show no ERROR lines (warnings are acceptable, especially NoC-related ones)."
+    },
+    {
+      "id": 3,
+      "description": "Run VCS smoke test with qdma_mm_test0. Configure run_vcs.sh or modify simulate.sh to: (1) Accept +TESTNAME argument and pass it to board_simv as +testname=<value>, (2) Run for sufficient time (the CED VCS flow uses board_simulate.do with 'run 2ms; quit' \u2014 create an analogous .do file or pass runtime via command line), (3) Copy required simulation data files (*.cdo, *.mem, nocattrs.dat, *.csv) to the VCS run directory if not already present. Run the simulation with +testname=qdma_mm_test0. The simulation should: (a) Complete CDO programming on both EP and RP, (b) Achieve PCIe link-up (LTSSM state 0x10, or user_lnk_up=1 in LINK_MON output), (c) Execute the qdma_mm_test0 test from sample_tests.vh, (d) Reach $finish without assertion failures. If LTSSM doesn't reach 0x10, check PIPESIM configuration and PIPE signal routing (board_firesim.v handles this via initial force blocks). The CED VCS flow's simulate.sh uses: './board_simv -ucli -licqueue -l simulate.log -do board_simulate.do'. Use the same pattern but add +testname=qdma_mm_test0.",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/run_vcs.sh"
+      ],
+      "build_command": "cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh simulate +TESTNAME=qdma_mm_test0",
+      "done_when": "VCS simulation log (simulate.log or simulate_full.log) contains: (1) 'CDO programming done on both EP and RP', (2) LTSSM=10 or user_lnk_up=1, (3) 'qdma_mm_test0 PASSED' (or at minimum reaches $finish without 'ERROR' or assertion failures). The simulation terminates normally via $finish (exit code 0 from board_simv)."
+    }
+  ]
+}

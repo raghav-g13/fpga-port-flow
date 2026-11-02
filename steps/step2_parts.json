@@ -1,0 +1,32 @@
+{
+  "step": {
+    "id": 2,
+    "name": "F1Shim MMIO simulation test",
+    "description": "Write a bar_test0 test in tests_firesim.vh that exercises the BAR1 \u2192 NoC \u2192 PCIE_M_AXI_LITE \u2192 F1Shim io_master path. The CED Option C tests (tests_v80_bar.vh) validated BAR1 \u2192 user_control (scratch registers at 0x60/0x64), but F1Shim's io_master is a different AXI-Lite endpoint with its own register map. The test should send MMIO reads to known F1Shim addresses (e.g., offset 0x0 for the simulation ready register, offset 0x4 for is_write_ready) and verify the response is valid (not X, not timeout). Also run the test in VCS from Step 1.",
+    "success_criteria": [
+      "bar_test0 test case exists in tests_firesim.vh",
+      "VCS simulation reaches PCIe link-up, enumerates BARs, and executes MMIO read/write transactions to F1Shim io_master",
+      "F1Shim responds to MMIO reads with valid data (not X or all-zeros from a disconnected bus)",
+      "Test completes to $finish with PASSED status in the simulation log",
+      "No NoC NMU $fatal errors (signals feeding NMU must be driven to known values through reset)"
+    ]
+  },
+  "parts": [
+    {
+      "id": 1,
+      "description": "Add bar_test0 test case to tests_firesim.vh that reads/writes F1Shim SimulationMaster registers via BAR1 (user_bar). The test should: (1) Read PRESENCE_READ at offset 0x224 and verify it equals 0x46697265 (FireSim fingerprint). (2) Read INIT_DONE at offset 0x220 and verify it equals 1 (init delay expired). (3) Write 0xDEADBEEF to PRESENCE_WRITE at offset 0x228, then read PRESENCE_READ and verify it changed to 0xDEADBEEF (write-readback through full path). (4) Read PeekPoke DONE register at offset 0x1D0 as additional bus-connectivity check (value should not be X). (5) Check all read data for X values using $isunknown(P_READ_DATA). Follow the existing test pattern: else-if block keyed on testname=='bar_test0', use board.RP.tx_usrapp.TSK_REG_READ/WRITE, track failures in test_state, report PASSED/FAILED, end with $finish. Add the new else-if block BEFORE the existing qdma_mm_firesim_test0 block in tests_firesim.vh. File: $FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/tests_firesim.vh where $FIRESIM=/home/ray/chipyard/sims/firesim",
+      "files_to_modify": [
+        "/home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif/tests_firesim.vh"
+      ],
+      "build_command": "bash -c 'grep -q \"bar_test0\" /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif/tests_firesim.vh && grep -c \"PRESENCE_READ\\|INIT_DONE\\|0x46697265\\|PRESENCE_WRITE\\|isunknown\\|PASSED\\|FAILED\" /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif/tests_firesim.vh'",
+      "done_when": "tests_firesim.vh contains a bar_test0 else-if block that exercises F1Shim registers at offsets 0x220 (INIT_DONE), 0x224 (PRESENCE_READ=0x46697265), and 0x228 (PRESENCE_WRITE with readback), with X-value checking and PASSED/FAILED reporting"
+    },
+    {
+      "id": 2,
+      "description": "Run VCS simulation with +TESTNAME=bar_test0 and verify it passes. Use the run_vcs.sh script which auto-detects that tests_firesim.vh changed and recompiles. The command is: cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh simulate +TESTNAME=bar_test0. This will: (a) recompile via vlogan (tests_firesim.vh is newer than board_simv), (b) re-elaborate via vcs, (c) run the simulation. Expected runtime: ~5 minutes total (compile ~2min, elaborate ~1min, simulate ~2min). Check simulate.log (in the VCS dir $CL_DIR/vcs/vcs/) for: CDO programming done, PCIe link-up (user_lnk_up=1), SYSTEM CHECK PASSED, BAR enumeration, MMIO read/write log lines showing valid data at F1Shim addresses, 'bar_test0 PASSED', and $finish. Ensure NO NoC NMU $fatal errors appear. If the test fails, debug the root cause \u2014 common issues: (1) wrong register offsets (check const.h), (2) X on read data (NoC routing issue), (3) timeout on read (AXI handshake stuck), (4) wrong BAR (user_bar not pointing at PCIE_M_AXI_LITE). The VCS run directory is: /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_xilinx_alveo_v80-firesim-FireSim-FireSimRocket8GiBDRAMConfig-BaseXilinxAlveoV80Config/vcs/vcs/",
+      "files_to_modify": [],
+      "build_command": "bash -c 'cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh simulate +TESTNAME=bar_test0 2>&1 | tail -50'",
+      "done_when": "VCS simulation log shows: (1) CDO programming done, (2) PCIe link-up achieved (user_lnk_up=1), (3) BAR enumeration + SYSTEM CHECK PASSED, (4) MMIO reads to F1Shim return valid data (not X, matching expected values like 0x46697265 for PRESENCE_READ), (5) 'bar_test0 PASSED' message, (6) $finish reached, (7) no $fatal errors in the log"
+    }
+  ]
+}

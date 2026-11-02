@@ -1,0 +1,33 @@
+{
+  "step": {
+    "id": 3,
+    "name": "F1Shim DMA simulation test",
+    "description": "Run qdma_mm_firesim_test0 (already defined in tests_firesim.vh) in VCS against the full FireSim design. This test uses CED's TSK_QDMA_MM_H2C_TEST and TSK_QDMA_MM_C2H_TEST tasks to drive QDMA MM DMA through the NoC to PCIE_M_AXI \u2192 F1Shim io_pcis. The CED Option C ran similar DMA tests but to BRAM targets; this test validates DMA reaches F1Shim's DMA port. The QDMA MM destination address must route through the NoC axi_noc_0 aperture at 0x203_0000_0000 (the overall_fpga_top.v strips this base, passing lower 32 bits to io_pcis). Address map mismatches are the most likely failure mode.",
+    "success_criteria": [
+      "qdma_mm_firesim_test0 runs in VCS against the F1Shim design",
+      "QDMA H2C (host-to-card) DMA transfer completes without timeout",
+      "QDMA C2H (card-to-host) DMA transfer completes without timeout",
+      "Test completes with PASSED status (no data compare errors)",
+      "No contention errors that prevent test completion (SecureIP contention warnings are expected and benign)"
+    ]
+  },
+  "parts": [
+    {
+      "id": 1,
+      "description": "Fix QDMA MM DMA descriptor card-side addresses to route through correct NoC aperture (0x203 instead of 0x201) and increase VCS simulation timeout for DMA transfers",
+      "files_to_modify": [
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/usp_pci_exp_usrapp_tx.v",
+        "$FIRESIM/platforms/xilinx_alveo_v80/cl_firesim/verif/run_vcs.sh"
+      ],
+      "build_command": "cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh compile",
+      "done_when": "VCS compile completes successfully (exit=0) with no errors in usp_pci_exp_usrapp_tx.v compilation. The changes are: (A) In TSK_INIT_QDMA_MM_DATA_H2C (~line 8300), under an `ifdef FIRESIM_EP` guard, change DATA_STORE[H2C_ADDR+(k*32)+20] from 8'h01 to 8'h03 \u2014 this changes the H2C destination (card-side) address from 0x0201_0000_0000 to 0x0203_0000_0000 so it routes through axi_noc_0 MADDR1/DST1=0xC0 to M01_AXI NSU \u2192 PCIE_M_AXI \u2192 F1Shim io_pcis (DMA port). (B) In TSK_INIT_QDMA_MM_DATA_C2H (~line 8352), under the same `ifdef FIRESIM_EP` guard, change DATA_STORE[C2H_ADDR+(k*32)+4] from 8'h01 to 8'h03 \u2014 same fix for the C2H source (card-side) address. Without this fix, address 0x201 routes to M00_AXI (PCIE_M_AXI_LITE / BAR), not the DMA port. (C) In run_vcs.sh update_simulate_do(), increase runtime from 'run 2ms' to 'run 5ms' to accommodate DMA transfers that traverse NoC + F1Shim + DDR4 model latency."
+    },
+    {
+      "id": 2,
+      "description": "Run VCS simulation with qdma_mm_firesim_test0 and verify the full QDMA MM DMA H2C+C2H flow completes with PASSED status",
+      "files_to_modify": [],
+      "build_command": "cd /home/ray/chipyard/sims/firesim/platforms/xilinx_alveo_v80/cl_firesim/verif && bash run_vcs.sh simulate +TESTNAME=qdma_mm_firesim_test0",
+      "done_when": "simulate.log (or simulate_full.log) contains 'qdma_mm_firesim_test0 PASSED' and the simulation reaches $finish. Key milestones to check in the log: (1) 'CDO programming done on both EP and RP', (2) 'SYSTEM CHECK PASSED' (PCIe link-up), (3) 'AXI-MM H2C Tests start' followed by 'AXI-MM H2C Completed' (H2C DMA without timeout), (4) 'AXI-MM C2H Tests start' with 'C2H Transfer Data MATCHES' followed by 'AXI-MM C2H Completed' (C2H DMA without data compare error), (5) 'qdma_mm_firesim_test0 PASSED'. If the test hangs (no $finish within 5ms), the most likely causes are: (a) DMA address still not routing correctly \u2014 check if PCIE_M_AXI awvalid/arvalid ever asserts, (b) F1Shim io_pcis not responding \u2014 check for X/Z on AXI response signals, (c) DDR4 path through axi_noc_1 not operational. SecureIP contention warnings ('contention on signal') from the CPM5 encrypted model are expected and benign \u2014 they do not indicate test failure."
+    }
+  ]
+}
